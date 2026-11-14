@@ -1,0 +1,17 @@
+[package]
+name = "anytrans-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command line client for AnyTrans"
+
+[[bin]]
+name = "anytrans"
+path = "src/main.rs"
+
+[dependencies]
+anytrans-core = { path = "../anytrans-core" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+dirs = "7.0.0"

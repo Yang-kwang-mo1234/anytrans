@@ -1,0 +1,3 @@
+# Copied in by the Tauri plugin build.
+/.tauri
+/ios/.build

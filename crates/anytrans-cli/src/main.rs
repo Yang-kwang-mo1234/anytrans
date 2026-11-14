@@ -27,6 +27,9 @@ struct Cli {
     /// Name other devices see for this one (remembered once set)
     #[arg(long, global = true)]
     name: Option<String>,
+    /// Relay server to use instead of the public ones
+    #[arg(long, global = true)]
+    relay: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -72,6 +75,7 @@ async fn main() -> Result<()> {
         download_dir,
         device_name: cli.name,
         mdns: true,
+        relay_url: cli.relay,
         local_only: false,
     })
     .await?;

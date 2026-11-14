@@ -60,6 +60,9 @@ targets:
         CFBundleVersion: "0.1.0"
     entitlements:
       path: anytrans-app_iOS/anytrans-app_iOS.entitlements
+      properties:
+        # Shared with ShareExtension, which leaves shared items there.
+        com.apple.security.application-groups: [group.com.anytrans.client]
     scheme:
       environmentVariables:
         RUST_BACKTRACE: full
@@ -77,11 +80,13 @@ targets:
     dependencies:
       - framework: libapp.a
         embed: false
+      - target: ShareExtension
       - sdk: CoreGraphics.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework
       - sdk: QuartzCore.framework
       - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
       - sdk: UIKit.framework
       - sdk: WebKit.framework
     preBuildScripts:
@@ -92,3 +97,34 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+  # Puts AnyTrans in the system share sheet. It only copies what was shared
+  # into the app group and opens the app; see ShareViewController.swift.
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension
+    info:
+      path: ShareExtension/Info.plist
+      properties:
+        CFBundleDisplayName: AnyTrans
+        CFBundleShortVersionString: 0.1.0
+        CFBundleVersion: "0.1.0"
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 100
+              NSExtensionActivationSupportsImageWithMaxCount: 100
+              NSExtensionActivationSupportsMovieWithMaxCount: 100
+    entitlements:
+      path: ShareExtension/ShareExtension.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.anytrans.client]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.anytrans.client.share
+        PRODUCT_NAME: ShareExtension
+        SWIFT_VERSION: "5.0"
+        ARCHS: [arm64]

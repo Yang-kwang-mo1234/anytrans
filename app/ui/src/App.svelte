@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { ask, open } from '@tauri-apps/plugin-dialog';
 
   let info = $state(null);
   let startupError = $state('');
@@ -22,6 +22,17 @@
 
   // Id of the device card files are being dragged over.
   let dropTarget = $state(null);
+
+  // Paths the share extension left for us to send (phones only).
+  let shared = $state([]);
+
+  // Settings panel: the form's working copy while it is open, else null.
+  let form = $state(null);
+  let autostart = $state(false);
+  let needsRestart = $state(false);
+  let settingsError = $state('');
+
+  const MEDIA = /\.(jpe?g|png|heic|heif|gif|webp|mov|mp4|m4v)$/i;
 
   const PATH_LABEL = {
     lan: '로컬 네트워크',
@@ -42,9 +53,93 @@
       }
       unlisten.push(await listen('anytrans-event', (e) => onEvent(e.payload)));
       unlisten.push(await getCurrentWebview().onDragDropEvent((e) => onDragDrop(e.payload)));
+      unlisten.push(await listen('anytrans-shared', checkShared));
+      checkShared();
     })();
-    return () => unlisten.forEach((stop) => stop());
+    // Also look whenever the app comes back to the foreground, in case the
+    // share extension could not open it and the user did so by hand.
+    const onVisible = () => document.visibilityState === 'visible' && checkShared();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      unlisten.forEach((stop) => stop());
+    };
   });
+
+  async function checkShared() {
+    if (info?.mobile) shared = await invoke('shared_items');
+  }
+
+  function sendShared(to) {
+    const paths = shared;
+    shared = [];
+    send(to, paths);
+  }
+
+  async function discardShared() {
+    await invoke('discard_shared', { paths: shared });
+    shared = [];
+  }
+
+  // On a metered connection, large transfers need a yes first.
+  async function confirmMetered(paths) {
+    if (!info.mobile) return true;
+    const [network, size, settings] = await Promise.all([
+      invoke('network_status'),
+      invoke('total_size', { paths }),
+      invoke('get_settings'),
+    ]);
+    if (!network.expensive || size <= settings.cellular_limit_mb * 1024 * 1024) return true;
+    return ask(`셀룰러 데이터로 ${human(size)}를 보냅니다. 계속할까요?`, {
+      title: 'AnyTrans',
+      kind: 'warning',
+    });
+  }
+
+  async function saveToPhotos(transfer) {
+    const paths = transfer.saved.filter((p) => MEDIA.test(p));
+    try {
+      const count = await invoke('save_to_photos', { paths });
+      notice = `사진 보관함에 ${count}개를 저장했습니다.`;
+    } catch (e) {
+      notice = `저장하지 못했습니다: ${e}`;
+    }
+  }
+
+  async function openSettings() {
+    settingsError = '';
+    form = await invoke('get_settings');
+    if (!info.mobile) {
+      const { isEnabled } = await import('@tauri-apps/plugin-autostart');
+      autostart = await isEnabled();
+    }
+  }
+
+  async function pickDownloadDir() {
+    const picked = await open({ directory: true });
+    if (picked) form.download_dir = picked;
+  }
+
+  async function saveSettings() {
+    settingsError = '';
+    try {
+      const before = await invoke('get_settings');
+      const next = { ...form, cellular_limit_mb: Math.max(0, Math.round(form.cellular_limit_mb)) };
+      await invoke('save_settings', { settings: next });
+      const after = await invoke('get_settings');
+      if (!info.mobile) {
+        const { enable, disable, isEnabled } = await import('@tauri-apps/plugin-autostart');
+        if ((await isEnabled()) !== autostart) await (autostart ? enable() : disable());
+      }
+      // Everything except the cellular limit is read when the app starts.
+      needsRestart ||= ['device_name', 'download_dir', 'relay_url'].some(
+        (key) => before[key] !== after[key],
+      );
+      form = null;
+    } catch (e) {
+      settingsError = String(e);
+    }
+  }
 
   function onEvent(event) {
     if (event.type === 'paired') {
@@ -117,6 +212,10 @@
   async function send(to, paths) {
     notice = '';
     try {
+      if (!(await confirmMetered(paths))) {
+        await invoke('discard_shared', { paths });
+        return;
+      }
       await invoke('send', { to, paths });
     } catch (e) {
       // Failures after the transfer started already show in the transfer list.
@@ -227,8 +326,83 @@
         <h1>{info.name}</h1>
         <span class="muted">이 기기</span>
       </div>
-      <button onclick={() => invoke('open_downloads')}>받은 파일</button>
+      <div class="row">
+        <button onclick={() => invoke('open_downloads')}>받은 파일</button>
+        <button onclick={openSettings}>설정</button>
+      </div>
     </header>
+
+    {#if needsRestart}
+      <div class="card">
+        <p class="plain">
+          {info.mobile ? '바뀐 설정은 앱을 완전히 닫았다가 다시 열면 적용됩니다.' : '바뀐 설정은 다시 시작해야 적용됩니다.'}
+        </p>
+        {#if !info.mobile}
+          <div class="row">
+            <button class="primary" onclick={() => invoke('restart_app')}>지금 다시 시작</button>
+            <button onclick={() => (needsRestart = false)}>나중에</button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    {#if form}
+      <section>
+        <div class="section-head"><h2>설정</h2></div>
+        <div class="card settings">
+          <label>
+            <span>기기 이름</span>
+            <input type="text" bind:value={form.device_name} placeholder={info.name} />
+            <small class="muted">이미 연결된 기기에는 다시 연결해야 새 이름이 보입니다.</small>
+          </label>
+          {#if info.mobile}
+            <label>
+              <span>셀룰러에서 확인 없이 보낼 최대 크기 (MB)</span>
+              <input type="number" min="0" inputmode="numeric" bind:value={form.cellular_limit_mb} />
+            </label>
+          {:else}
+            <label>
+              <span>받은 파일 저장 위치</span>
+              <input type="text" readonly value={form.download_dir ?? info.download_dir} />
+            </label>
+            <div class="row">
+              <button onclick={pickDownloadDir}>폴더 선택</button>
+              <button onclick={() => (form.download_dir = null)}>기본값으로</button>
+            </div>
+            <label class="check">
+              <input type="checkbox" bind:checked={autostart} />
+              <span>로그인할 때 자동으로 실행</span>
+            </label>
+          {/if}
+          <label>
+            <span>릴레이 서버 주소</span>
+            <input type="text" bind:value={form.relay_url} placeholder="비워 두면 공용 릴레이 사용" />
+          </label>
+          {#if settingsError}<p class="error">{settingsError}</p>{/if}
+          <div class="row">
+            <button class="primary" onclick={saveSettings}>저장</button>
+            <button onclick={() => (form = null)}>닫기</button>
+          </div>
+        </div>
+      </section>
+    {/if}
+
+    {#if shared.length > 0}
+      <section>
+        <div class="section-head"><h2>공유된 항목 {shared.length}개</h2></div>
+        <div class="card">
+          {#if peers.length === 0}
+            <p class="plain">먼저 보낼 기기를 추가해 주세요.</p>
+          {/if}
+          <div class="row">
+            {#each peers as peer (peer.id)}
+              <button class="primary" onclick={() => sendShared(peer.id)}>{peer.name}(으)로 보내기</button>
+            {/each}
+            <button onclick={discardShared}>취소</button>
+          </div>
+        </div>
+      </section>
+    {/if}
 
     {#if notice}
       <button class="notice" onclick={() => (notice = '')}>{notice}</button>
@@ -332,7 +506,12 @@
               {:else if t.status === 'done'}
                 <span class="ok">완료</span>
                 {#if t.saved.length > 0}
-                  <button class="link" onclick={() => invoke('open_downloads')}>폴더 열기</button>
+                  <span class="row">
+                    {#if info.mobile && t.saved.some((p) => MEDIA.test(p))}
+                      <button class="link" onclick={() => saveToPhotos(t)}>사진에 저장</button>
+                    {/if}
+                    <button class="link" onclick={() => invoke('open_downloads')}>폴더 열기</button>
+                  </span>
                 {/if}
               {:else}
                 <span class="error">실패: {t.error}</span>
@@ -368,6 +547,11 @@
     margin: 0;
     font-size: 18px;
     overflow-wrap: anywhere;
+  }
+
+  header .row {
+    flex-wrap: nowrap;
+    flex-shrink: 0;
   }
 
   h2 {
@@ -434,8 +618,25 @@
   }
 
   .empty p,
-  .pairing p {
+  .pairing p,
+  .plain {
     margin: 0;
+  }
+
+  .settings label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .settings label.check {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .settings label > span {
+    font-size: 13px;
   }
 
   .qr {
@@ -476,6 +677,7 @@
   .transfer-foot {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     gap: 8px;
     font-size: 13px;
   }

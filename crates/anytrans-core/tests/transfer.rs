@@ -25,6 +25,7 @@ impl Device {
             download_dir: dir.path().join("downloads"),
             device_name: Some(name.to_string()),
             mdns: false,
+            relay_url: None,
             local_only: true,
         })
         .await
@@ -209,6 +210,35 @@ async fn refuses_devices_that_are_not_paired() {
     let error = stranger.send(&mac, vec![file]).await.unwrap_err();
     assert!(format!("{error:#}").contains("not paired"), "{error:#}");
     assert_eq!(fs::read_dir(mac.downloads()).unwrap().count(), 0);
+}
+
+#[tokio::test]
+async fn remembered_sends_are_forgotten_once_settled() {
+    let (mac, pc) = (Device::start("mac").await, Device::start("pc").await);
+    pair(&mac, &pc).await;
+    let file = mac.source("a.txt", b"hello");
+
+    // Delivered: nothing left to resume.
+    mac.node
+        .send_and_remember(&pc.node.id(), vec![file.clone()])
+        .await
+        .unwrap();
+    assert!(mac.node.pending_sends().is_empty());
+
+    // Refused for good: retrying after a restart would not help either.
+    pc.node.forget_peer(&mac.node.id()).unwrap();
+    let refused = mac.node.send_and_remember(&pc.node.id(), vec![file]).await;
+    assert!(refused.is_err());
+    assert!(mac.node.pending_sends().is_empty());
+
+    // Files that no longer exist cannot be sent later.
+    let missing = mac.dir.path().join("gone.txt");
+    let failed = mac
+        .node
+        .send_and_remember(&pc.node.id(), vec![missing])
+        .await;
+    assert!(failed.is_err());
+    assert!(mac.node.pending_sends().is_empty());
 }
 
 #[tokio::test]

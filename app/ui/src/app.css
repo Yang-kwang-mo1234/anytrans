@@ -60,24 +60,6 @@ button {
   cursor: pointer;
 }
 
-/* Fingers need bigger targets than mouse pointers, and iOS zooms into text
-   fields whose font is smaller than 16px. */
-@media (pointer: coarse) {
-  button:not(.link) {
-    min-height: 44px;
-    padding: 8px 16px;
-  }
-
-  button.link {
-    min-height: 44px;
-    padding: 0 4px;
-  }
-
-  textarea {
-    font-size: 16px;
-  }
-}
-
 button:hover:not(:disabled) {
   border-color: var(--accent);
 }
@@ -115,7 +97,51 @@ textarea {
   user-select: text;
 }
 
+input[type='text'],
+input[type='number'] {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  width: 100%;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Fingers need bigger targets than mouse pointers, and iOS zooms into text
+   fields whose font is smaller than 16px. */
+@media (pointer: coarse) {
+  button:not(.link) {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+
+  button.link {
+    min-height: 44px;
+    padding: 0 4px;
+  }
+
+  textarea,
+  input[type='text'],
+  input[type='number'] {
+    font-size: 16px;
+  }
+
+  input[type='text'],
+  input[type='number'] {
+    min-height: 44px;
+  }
 }

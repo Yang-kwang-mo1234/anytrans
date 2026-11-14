@@ -22,6 +22,7 @@ use tokio::{
 use crate::{
     events::{Direction, Event, Progress},
     node::Shared,
+    outbox::PendingSend,
     protocol::{
         hash_prefix, read_frame, transfer_id, write_frame, Control, FileHeader, Item, ItemKind,
         Offer, Reply, ALPN_XFER, CHUNK, FILE_OK,
@@ -138,9 +139,23 @@ pub(crate) async fn send(
     endpoint: &Endpoint,
     to: EndpointId,
     paths: Vec<PathBuf>,
+    remember: bool,
 ) -> Result<()> {
-    let manifest = tokio::task::spawn_blocking(move || build_manifest(&paths)).await??;
-    let manifest = Arc::new(manifest);
+    let pending = PendingSend {
+        to,
+        paths: paths.clone(),
+    };
+    let manifest = match tokio::task::spawn_blocking(move || build_manifest(&paths)).await? {
+        Ok(manifest) => Arc::new(manifest),
+        Err(e) => {
+            // The files are gone or unreadable: nothing to come back to.
+            shared.outbox.remove(&pending)?;
+            return Err(e);
+        }
+    };
+    if remember {
+        shared.outbox.add(pending.clone())?;
+    }
     let id = transfer_id(&endpoint.id(), &manifest.items);
     let total_bytes = manifest.items.iter().map(|i| i.size).sum();
     let peer = shared
@@ -187,6 +202,12 @@ pub(crate) async fn send(
         tracing::warn!("transfer interrupted, retrying: {error:#}");
         tokio::time::sleep(Duration::from_secs(1 << stalled.min(5))).await;
     };
+
+    // Keep the entry only when giving up was about the connection, which a
+    // later attempt may well get past.
+    if result.as_ref().map_or_else(|e| e.is::<Fatal>(), |()| true) {
+        shared.outbox.remove(&pending)?;
+    }
 
     match &result {
         Ok(()) => shared.emit(Event::TransferFinished {

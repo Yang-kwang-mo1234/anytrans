@@ -18,6 +18,68 @@
 - **데스크톱**: 끌어다 놓기로 보내기, 트레이 상주(창을 닫아도 계속 수신), 로그인 시 자동 실행.
 - **iOS·iPadOS**: 공유 시트에서 바로 보내기, 사진 보관함에서 보내기, 받은 파일을 파일 앱에 표시, 받은 사진·동영상을 사진 보관함에 저장, 셀룰러에서 큰 파일을 보내기 전 확인.
 
+## 설치
+
+[Releases](https://github.com/Yang-kwang-mo1234/anytrans/releases) 페이지의 최신 버전에서 운영체제에 맞는 파일을 내려받으세요.
+
+| 운영체제 | 파일 | 비고 |
+|---|---|---|
+| macOS | `AnyTrans_<버전>_universal.dmg` | Apple silicon·Intel Mac 공용 |
+| Windows 10·11 (64비트) | `AnyTrans_<버전>_x64-setup.exe` | 일반 설치 프로그램 |
+| Windows 10·11 (64비트) | `AnyTrans_<버전>_x64_en-US.msi` | 회사 PC 일괄 배포용. 둘 중 하나만 설치하세요. |
+| iPhone, iPad | 제공하지 않음 | 아래 "iPhone·iPad" 참고 |
+| CLI (macOS) | `anytrans-cli-macos-universal` | 앱 없이 명령어로만 쓸 때 |
+| CLI (Windows) | `anytrans-cli-windows-x64.exe` | 앱 없이 명령어로만 쓸 때 |
+
+설치 파일은 개발자 인증서로 서명되어 있지 않아서, 처음 실행할 때 운영체제가 경고를 띄웁니다. 아래 순서대로 한 번만 허용하면 됩니다.
+
+### macOS
+
+1. `.dmg`를 열고 AnyTrans를 응용 프로그램 폴더로 끌어다 놓습니다.
+2. 응용 프로그램 폴더에서 AnyTrans를 엽니다. "확인할 수 없습니다"라는 경고가 뜨면 **완료**를 누릅니다.
+3. **시스템 설정 → 개인정보 보호 및 보안**으로 가서, 아래쪽 AnyTrans 항목의 **그래도 열기**를 누릅니다.
+4. 다시 AnyTrans를 열고, 묻는 창에서 **열기**를 누릅니다.
+
+처음 실행하면 "로컬 네트워크의 기기를 찾도록 허용"할지 묻습니다. 허용해야 같은 Wi-Fi의 기기와 직접 연결됩니다.
+
+위 방법이 안 되면 터미널에서 다운로드 표시를 지운 뒤 다시 엽니다.
+
+```bash
+xattr -dr com.apple.quarantine /Applications/AnyTrans.app
+```
+
+### Windows
+
+1. `x64-setup.exe`를 실행합니다.
+2. "Windows의 PC 보호" 창이 뜨면 **추가 정보**를 누르고 **실행**을 누릅니다.
+3. 설치가 끝나면 시작 메뉴에서 AnyTrans를 엽니다.
+
+처음 실행할 때 Windows 방화벽이 네트워크 접근을 물으면 **개인 네트워크**를 허용하세요. 같은 Wi-Fi의 기기와 직접 연결하는 데 필요합니다.
+
+화면을 그리는 데 Microsoft Edge WebView2가 필요한데, Windows 10·11에는 대부분 이미 들어 있고 없으면 설치 프로그램이 내려받습니다.
+
+### iPhone·iPad
+
+App Store나 TestFlight로는 아직 배포하지 않습니다. 직접 설치하려면 Mac과 Apple Developer 계정이 필요하며, 소스에서 빌드해 설치합니다([iOS·iPadOS 앱](#iosipados-앱) 참고).
+
+### CLI
+
+macOS:
+
+```bash
+chmod +x anytrans-cli-macos-universal
+xattr -d com.apple.quarantine anytrans-cli-macos-universal
+sudo mv anytrans-cli-macos-universal /usr/local/bin/anytrans
+```
+
+Windows는 `anytrans-cli-windows-x64.exe`를 `anytrans.exe`로 이름을 바꿔 원하는 폴더에 두고, 그 폴더를 PATH에 추가하면 됩니다.
+
+### 처음 연결하기
+
+1. 한 기기에서 **기기 추가**를 누르면 QR 코드와 코드 문자열이 나옵니다.
+2. 다른 기기에서 **기기 추가 → 코드 입력하기**를 누르고, QR을 스캔하거나 코드를 붙여 넣습니다.
+3. 양쪽 목록에 상대 기기가 보이면 끝입니다. 이후에는 기기 카드의 **파일 보내기**를 누르거나 파일을 끌어다 놓으면 됩니다.
+
 ## 동작 방식
 
 각 기기는 처음 실행할 때 비밀 키를 만들고, 그 공개키가 기기 ID가 됩니다. 모든 연결은 QUIC/TLS로 암호화되고 서로의 ID를 확인합니다. 페어링한 기기 목록에 없는 ID의 전송은 거부합니다.
@@ -158,7 +220,19 @@ cargo test --workspace
 GitHub Actions:
 
 - **CI** (`.github/workflows/ci.yml`): `main` 푸시와 PR마다 macOS·Windows에서 fmt, clippy, 테스트를 실행합니다.
-- **Release** (`.github/workflows/release.yml`): `v0.1.0` 같은 태그를 푸시하면 macOS·Windows 설치 파일과 CLI를 빌드해 GitHub 릴리스 초안에 올립니다.
+- **Release** (`.github/workflows/release.yml`): `v0.1.0` 같은 태그를 푸시하면 macOS(범용)·Windows 설치 파일과 CLI를 빌드해 GitHub 릴리스 초안에 올립니다.
+
+새 버전을 낼 때:
+
+1. `app/src-tauri/tauri.conf.json`과 `Cargo.toml`(`workspace.package`)의 `version`을 올립니다.
+2. 커밋하고 같은 버전의 태그를 푸시합니다.
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+3. 워크플로가 끝나면 [Releases](https://github.com/Yang-kwang-mo1234/anytrans/releases)에 초안이 생깁니다. 위 "설치" 표의 파일이 모두 올라왔는지 확인하고 **Publish release**를 누릅니다.
 
 ## 알려진 제한
 

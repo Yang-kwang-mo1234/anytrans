@@ -1,8 +1,11 @@
 name: Release
 
-# Pushing a tag like v0.1.0 builds the installers and attaches them to a draft
-# GitHub release. Nothing is signed with a developer certificate: Windows shows
-# a SmartScreen warning, and macOS needs right-click > Open on first launch.
+# Pushing a tag like v0.1.0 builds the installers and the command line tool
+# and attaches them to a draft GitHub release, to be checked and published by
+# hand. Nothing is signed with a developer certificate: Windows shows a
+# SmartScreen warning, and macOS asks for approval on first launch.
+#
+# The tag must match `version` in app/src-tauri/tauri.conf.json.
 on:
   push:
     tags: ["v*"]
@@ -16,14 +19,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # One build that runs on both Apple silicon and Intel Macs.
           - os: macos-latest
-            args: --target aarch64-apple-darwin
+            args: --target universal-apple-darwin
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
           - os: windows-latest
             args: ""
+            rust_targets: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
@@ -39,19 +47,29 @@ jobs:
           projectPath: app
           tagName: ${{ github.ref_name }}
           releaseName: AnyTrans ${{ github.ref_name }}
+          releaseBody: 설치 방법은 README의 "설치" 항목을 보세요.
           releaseDraft: true
           args: ${{ matrix.args }}
+
       # The command line tool is not part of the Tauri bundle.
-      - run: cargo build --release -p anytrans-cli
+      - name: Build the CLI (macOS, universal)
+        if: runner.os == 'macOS'
+        run: |
+          cargo build --release -p anytrans-cli --target aarch64-apple-darwin
+          cargo build --release -p anytrans-cli --target x86_64-apple-darwin
+          lipo -create -output anytrans-cli-macos-universal \
+            target/aarch64-apple-darwin/release/anytrans \
+            target/x86_64-apple-darwin/release/anytrans
+      - name: Build the CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --release -p anytrans-cli
+          cp target/release/anytrans.exe anytrans-cli-windows-x64.exe
       - name: Attach the CLI
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/release/anytrans.exe anytrans-cli-windows-x64.exe
-            gh release upload "${{ github.ref_name }}" anytrans-cli-windows-x64.exe --clobber
-          else
-            cp target/release/anytrans anytrans-cli-macos-arm64
-            gh release upload "${{ github.ref_name }}" anytrans-cli-macos-arm64 --clobber
-          fi
+          file=$(ls anytrans-cli-*)
+          gh release upload "${{ github.ref_name }}" "$file" --clobber

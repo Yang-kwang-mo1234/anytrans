@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/anytrans-core", "crates/anytrans-cli"]
+members = ["crates/anytrans-core", "crates/anytrans-cli", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

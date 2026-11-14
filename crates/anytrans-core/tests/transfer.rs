@@ -24,6 +24,7 @@ impl Device {
             data_dir: dir.path().join("data"),
             download_dir: dir.path().join("downloads"),
             device_name: Some(name.to_string()),
+            mdns: false,
             local_only: true,
         })
         .await

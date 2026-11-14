@@ -14,6 +14,7 @@
   // Pairing panel: null (closed), 'show' (this device shows a code) or 'enter'.
   let pairing = $state(null);
   let ticket = $state('');
+  let ticketQr = $state('');
   let codeInput = $state('');
   let pairBusy = $state(false);
   let pairError = $state('');
@@ -125,8 +126,14 @@
     }
   }
 
-  async function pick(to, directory) {
-    const picked = await open({ multiple: !directory, directory });
+  // `kind` is 'file', 'folder' or 'media' (the photo library, on phones).
+  async function pick(to, kind) {
+    const options = {
+      file: { multiple: true },
+      folder: { directory: true },
+      media: { multiple: true, pickerMode: 'media' },
+    }[kind];
+    const picked = await open(options);
     if (!picked) return;
     send(to, Array.isArray(picked) ? picked : [picked]);
   }
@@ -140,9 +147,12 @@
     pairing = 'show';
     pairError = '';
     ticket = '';
+    ticketQr = '';
     copied = false;
     try {
-      ticket = await invoke('pairing_ticket');
+      const created = await invoke('pairing_ticket');
+      ticket = created.code;
+      ticketQr = created.qr;
     } catch (e) {
       pairError = String(e);
     }
@@ -163,6 +173,24 @@
       pairError = String(e);
     } finally {
       pairBusy = false;
+    }
+  }
+
+  async function scanCode() {
+    pairError = '';
+    try {
+      const scanner = await import('@tauri-apps/plugin-barcode-scanner');
+      let permission = await scanner.checkPermissions();
+      if (permission !== 'granted') permission = await scanner.requestPermissions();
+      if (permission !== 'granted') {
+        pairError = '카메라 권한이 필요합니다. 설정 앱에서 허용해 주세요.';
+        return;
+      }
+      const result = await scanner.scan({ windowed: false, formats: [scanner.Format.QRCode] });
+      codeInput = result.content;
+      await submitCode();
+    } catch (e) {
+      pairError = String(e);
     }
   }
 
@@ -221,8 +249,14 @@
             <button class:active={pairing === 'enter'} onclick={enterCode}>코드 입력하기</button>
           </div>
           {#if pairing === 'show'}
-            <p class="muted">다른 기기에서 이 코드를 입력하세요. 5분 동안, 한 번만 쓸 수 있습니다.</p>
-            <textarea rows="5" readonly value={ticket} placeholder="코드를 만드는 중…"></textarea>
+            <p class="muted">
+              다른 기기에서 QR을 스캔하거나 코드를 입력하세요. 5분 동안, 한 번만 쓸 수 있습니다.
+            </p>
+            {#if ticketQr}
+              <!-- SVG built by our own backend from the pairing code. -->
+              <div class="qr">{@html ticketQr}</div>
+            {/if}
+            <textarea rows="4" readonly value={ticket} placeholder="코드를 만드는 중…"></textarea>
             <div class="row">
               <button class="primary" disabled={!ticket} onclick={copyTicket}>
                 {copied ? '복사됨' : '코드 복사'}
@@ -230,7 +264,12 @@
               <button onclick={() => (pairing = null)}>닫기</button>
             </div>
           {:else}
-            <p class="muted">다른 기기에 표시된 코드를 붙여 넣으세요.</p>
+            <p class="muted">
+              {info.mobile ? '다른 기기에 표시된 QR을 스캔하거나 코드를 붙여 넣으세요.' : '다른 기기에 표시된 코드를 붙여 넣으세요.'}
+            </p>
+            {#if info.mobile}
+              <button class="primary" disabled={pairBusy} onclick={scanCode}>QR 스캔</button>
+            {/if}
             <textarea rows="5" bind:value={codeInput} placeholder="코드 붙여넣기"></textarea>
             <div class="row">
               <button class="primary" disabled={pairBusy || !codeInput.trim()} onclick={submitCode}>
@@ -250,8 +289,12 @@
             <span class="muted">{peer.id.slice(0, 10)}</span>
           </div>
           <div class="row">
-            <button class="primary" onclick={() => pick(peer.id, false)}>파일 보내기</button>
-            <button onclick={() => pick(peer.id, true)}>폴더 보내기</button>
+            <button class="primary" onclick={() => pick(peer.id, 'file')}>파일 보내기</button>
+            {#if info.mobile}
+              <button onclick={() => pick(peer.id, 'media')}>사진 보내기</button>
+            {:else}
+              <button onclick={() => pick(peer.id, 'folder')}>폴더 보내기</button>
+            {/if}
             <button class="link forget" onclick={() => forget(peer)}>삭제</button>
           </div>
         </div>
@@ -263,7 +306,7 @@
           </div>
         {/if}
       {/each}
-      {#if peers.length > 0}
+      {#if peers.length > 0 && !info.mobile}
         <p class="hint muted">파일이나 폴더를 기기 위로 끌어다 놓아도 됩니다.</p>
       {/if}
     </section>
@@ -306,7 +349,9 @@
   main {
     max-width: 560px;
     margin: 0 auto;
-    padding: 16px;
+    /* Keep clear of the notch and the home indicator on phones. */
+    padding: calc(16px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+      calc(16px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
     display: flex;
     flex-direction: column;
     gap: 20px;
@@ -391,6 +436,19 @@
   .empty p,
   .pairing p {
     margin: 0;
+  }
+
+  .qr {
+    align-self: center;
+    line-height: 0;
+    padding: 8px;
+    border-radius: 8px;
+    background: #ffffff;
+  }
+
+  .qr :global(svg) {
+    width: 200px;
+    height: 200px;
   }
 
   .tabs {

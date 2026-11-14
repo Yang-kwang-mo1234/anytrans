@@ -3,6 +3,7 @@ name = "anytrans-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Device pairing and resumable file transfer over iroh"
 
 [dependencies]

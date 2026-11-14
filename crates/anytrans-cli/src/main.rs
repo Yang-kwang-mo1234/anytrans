@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
         data_dir,
         download_dir,
         device_name: cli.name,
+        mdns: true,
         local_only: false,
     })
     .await?;

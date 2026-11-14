@@ -34,6 +34,9 @@ pub struct NodeOptions {
     /// Name shown to other devices. `None` keeps the stored name, or falls back
     /// to the host name on first start.
     pub device_name: Option<String>,
+    /// Announce this device on the local network and look for others there,
+    /// so devices on the same Wi-Fi find each other without internet access.
+    pub mdns: bool,
     /// Use no relay and no discovery service: peers are reachable only at
     /// addresses learned while pairing. Meant for tests.
     pub local_only: bool,
@@ -83,8 +86,10 @@ impl Node {
 
         let builder = if opts.local_only {
             Endpoint::builder(presets::Minimal).relay_mode(RelayMode::Disabled)
-        } else {
+        } else if opts.mdns {
             Endpoint::builder(presets::N0).address_lookup(MdnsAddressLookup::builder())
+        } else {
+            Endpoint::builder(presets::N0)
         };
         let endpoint = builder
             .secret_key(key)

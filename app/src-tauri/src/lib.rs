@@ -28,6 +28,8 @@ struct Info {
     id: String,
     name: String,
     download_dir: PathBuf,
+    /// Phone or tablet: no folder picking, no drag and drop, but a camera.
+    mobile: bool,
 }
 
 #[tauri::command]
@@ -37,6 +39,7 @@ fn info(state: State<'_, AppState>) -> Result<Info, String> {
         id: node.id().to_string(),
         name: node.name().to_string(),
         download_dir: node.download_dir().to_path_buf(),
+        mobile: cfg!(mobile),
     })
 }
 
@@ -45,9 +48,23 @@ fn peers(state: State<'_, AppState>) -> Result<Vec<Peer>, String> {
     Ok(state.node()?.peers())
 }
 
+#[derive(Serialize)]
+struct Ticket {
+    code: String,
+    /// The code as a QR image (SVG markup) for a phone to scan.
+    qr: String,
+}
+
 #[tauri::command]
-async fn pairing_ticket(state: State<'_, AppState>) -> Result<String, String> {
-    state.node()?.pairing_ticket().await.map_err(message)
+async fn pairing_ticket(state: State<'_, AppState>) -> Result<Ticket, String> {
+    let code = state.node()?.pairing_ticket().await.map_err(message)?;
+    // The code is upper-case base32, which QR codes store compactly.
+    let qr = qrcode::QrCode::new(code.as_bytes())
+        .map_err(message)?
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(240, 240)
+        .build();
+    Ok(Ticket { code, qr })
 }
 
 #[tauri::command]
@@ -62,35 +79,72 @@ fn forget(state: State<'_, AppState>, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// File pickers hand back plain paths on desktop and `file://` URLs on iOS.
+fn local_path(picked: String) -> Result<PathBuf, String> {
+    if !picked.starts_with("file://") {
+        return Ok(PathBuf::from(picked));
+    }
+    tauri::Url::parse(&picked)
+        .ok()
+        .and_then(|url| url.to_file_path().ok())
+        .ok_or_else(|| format!("cannot read {picked}"))
+}
+
 /// Resolves once the transfer has finished; progress arrives as events.
 #[tauri::command]
-async fn send(state: State<'_, AppState>, to: String, paths: Vec<PathBuf>) -> Result<(), String> {
+async fn send(state: State<'_, AppState>, to: String, paths: Vec<String>) -> Result<(), String> {
     let to: EndpointId = to.parse().map_err(message)?;
+    let paths = paths
+        .into_iter()
+        .map(local_path)
+        .collect::<Result<Vec<_>, _>>()?;
     state.node()?.send(&to, paths).await.map_err(message)
 }
 
+/// Shows the received files: the folder on desktop, the Files app on iOS.
 #[tauri::command]
 fn open_downloads(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let dir = state.node()?.download_dir().to_string_lossy().into_owned();
-    app.opener().open_path(dir, None::<&str>).map_err(message)
+    if cfg!(target_os = "ios") {
+        let url = format!("shareddocuments://{dir}");
+        app.opener().open_url(url, None::<&str>).map_err(message)
+    } else {
+        app.opener().open_path(dir, None::<&str>).map_err(message)
+    }
 }
 
-/// Starts the node. `ANYTRANS_DATA_DIR` and `ANYTRANS_DOWNLOAD_DIR` override
-/// the default locations, which are the same ones the CLI uses.
+/// Starts the node.
+///
+/// On desktop the directories are the ones the CLI uses, and
+/// `ANYTRANS_DATA_DIR` / `ANYTRANS_DOWNLOAD_DIR` override them. On mobile
+/// received files go to the app's Documents folder, which the Files app shows.
 async fn start_node(app: &AppHandle) -> Result<Node, String> {
     let dir = |var: &str| std::env::var_os(var).map(PathBuf::from);
-    let data_dir = match dir("ANYTRANS_DATA_DIR") {
-        Some(dir) => dir,
-        None => app.path().config_dir().map_err(message)?.join("anytrans"),
-    };
-    let download_dir = match dir("ANYTRANS_DOWNLOAD_DIR") {
-        Some(dir) => dir,
-        None => app.path().download_dir().map_err(message)?.join("AnyTrans"),
+    let path = app.path();
+    let (data_dir, download_dir) = if cfg!(mobile) {
+        (
+            path.app_data_dir().map_err(message)?,
+            path.document_dir().map_err(message)?,
+        )
+    } else {
+        (
+            match dir("ANYTRANS_DATA_DIR") {
+                Some(dir) => dir,
+                None => path.config_dir().map_err(message)?.join("anytrans"),
+            },
+            match dir("ANYTRANS_DOWNLOAD_DIR") {
+                Some(dir) => dir,
+                None => path.download_dir().map_err(message)?.join("AnyTrans"),
+            },
+        )
     };
     Node::start(NodeOptions {
         data_dir,
         download_dir,
         device_name: None,
+        // iOS only lets apps holding a special entitlement send the multicast
+        // packets mDNS needs. Devices there are found through the relay.
+        mdns: cfg!(desktop),
         local_only: false,
     })
     .await
@@ -157,7 +211,12 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_opener::init());
+
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+
+    let builder = builder
         .setup(|app| {
             let node = tauri::async_runtime::block_on(start_node(app.handle()));
             if let Ok(node) = &node {

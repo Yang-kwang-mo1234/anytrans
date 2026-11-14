@@ -60,6 +60,24 @@ button {
   cursor: pointer;
 }
 
+/* Fingers need bigger targets than mouse pointers, and iOS zooms into text
+   fields whose font is smaller than 16px. */
+@media (pointer: coarse) {
+  button:not(.link) {
+    min-height: 44px;
+    padding: 8px 16px;
+  }
+
+  button.link {
+    min-height: 44px;
+    padding: 0 4px;
+  }
+
+  textarea {
+    font-size: 16px;
+  }
+}
+
 button:hover:not(:disabled) {
   border-color: var(--accent);
 }
